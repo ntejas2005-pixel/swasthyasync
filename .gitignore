@@ -1,0 +1,23 @@
+node_modules/
+.env
+.env.*
+!.env.example
+.next/
+
+# Next.js
+.next/
+
+# React/Vite
+dist/
+
+# Logs
+*.log
+
+# Build files
+build/
+
+# Python
+__pycache__/
+*.pyc
+venv/
+.venv/
