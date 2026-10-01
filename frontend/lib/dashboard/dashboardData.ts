@@ -30,6 +30,7 @@ import {
   WalletCards,
   type LucideIcon,
 } from "lucide-react";
+import type { ModuleKey, PermissionAction } from "@/lib/permissions";
 
 export interface DashboardModule {
   key: string;
@@ -37,6 +38,8 @@ export interface DashboardModule {
   description: string;
   icon: LucideIcon;
   href?: string;
+  permission?: ModuleKey;
+  action?: PermissionAction;
 }
 
 export interface DashboardModuleCategory {
@@ -44,6 +47,7 @@ export interface DashboardModuleCategory {
   label: string;
   icon: LucideIcon;
   modules: DashboardModule[];
+  permission: ModuleKey;
 }
 
 const moduleItem = (
@@ -51,16 +55,19 @@ const moduleItem = (
   label: string,
   description: string,
   icon: LucideIcon,
-  href?: string
-): DashboardModule => ({ key, label, description, icon, href });
+  href?: string,
+  permission?: ModuleKey,
+  action?: PermissionAction
+): DashboardModule => ({ key, label, description, icon, href, permission, action });
 
 export const DASHBOARD_MODULE_CATEGORIES: DashboardModuleCategory[] = [
   {
     key: "patient-administration",
     label: "Patient Administration",
     icon: Users,
+    permission: "patients",
     modules: [
-      moduleItem("registration", "Registration", "Create patient records", UserRound),
+      moduleItem("registration", "Registration", "Create patient records", UserRound, undefined, "patients", "create"),
       moduleItem("opd", "OPD", "Manage outpatient visits", ClipboardList, "/opd"),
       moduleItem("ipd", "IPD", "Manage admissions and beds", BedDouble, "/ipd"),
       moduleItem("queue", "Queue", "View today's queue", Activity, "/opd"),
@@ -73,18 +80,20 @@ export const DASHBOARD_MODULE_CATEGORIES: DashboardModuleCategory[] = [
     key: "clinical",
     label: "Clinical",
     icon: Stethoscope,
+    permission: "cpoe",
     modules: [
-      moduleItem("doctors-workbench", "Doctors Workbench", "Coming in a later phase", Stethoscope),
+      moduleItem("doctors-workbench", "Doctors Workbench", "Coming in a later phase", Stethoscope, undefined, "clinical_notes"),
       moduleItem("cpoe", "CPOE", "Create physician orders", ClipboardList, "/cpoe"),
-      moduleItem("clinical-notes", "Clinical Notes", "Review clinical notes", FileText, "/clinical-notes"),
-      moduleItem("discharge-summary", "Discharge Summary", "Prepare discharge summaries", FileCheck2, "/discharge"),
-      moduleItem("patient-forms", "Patient Forms", "Browse real hospital form templates", ClipboardCheck, "/forms"),
+      moduleItem("clinical-notes", "Clinical Notes", "Review clinical notes", FileText, "/clinical-notes", "clinical_notes"),
+      moduleItem("discharge-summary", "Discharge Summary", "Prepare discharge summaries", FileCheck2, "/discharge", "discharge"),
+      moduleItem("patient-forms", "Patient Forms", "Browse real hospital form templates", ClipboardCheck, "/forms", "patient_forms"),
     ],
   },
   {
     key: "patient-billing",
     label: "Patient Billing",
     icon: Receipt,
+    permission: "billing",
     modules: [
       moduleItem("opd-billing", "OPD Billing", "Review billing workspace", Receipt, "/billing"),
       moduleItem("ipd-billing", "IPD Billing", "Review billing workspace", WalletCards, "/billing"),
@@ -96,6 +105,7 @@ export const DASHBOARD_MODULE_CATEGORIES: DashboardModuleCategory[] = [
     key: "revenue-cycle",
     label: "Revenue Cycle",
     icon: BarChart3,
+    permission: "revenue_cycle",
     modules: [
       moduleItem("claims-processing", "Claims Processing", "Coming in a later phase", FileCheck2),
       moduleItem("claim-submission", "Claim Submission", "Coming in a later phase", FileText),
@@ -107,6 +117,7 @@ export const DASHBOARD_MODULE_CATEGORIES: DashboardModuleCategory[] = [
     key: "radiology",
     label: "Radiology",
     icon: Scan,
+    permission: "radiology",
     modules: [
       moduleItem("radiology-orders", "Radiology Orders", "Review imaging orders", ClipboardList, "/radiology"),
       moduleItem("report-management", "Report Management", "Review imaging reports", FileText, "/radiology"),
@@ -117,6 +128,7 @@ export const DASHBOARD_MODULE_CATEGORIES: DashboardModuleCategory[] = [
     key: "laboratory",
     label: "Laboratory",
     icon: FlaskConical,
+    permission: "laboratory",
     modules: [
       moduleItem("lab-orders", "Lab Orders", "Review pending orders", ClipboardList, "/laboratory"),
       moduleItem("result-entry", "Result Entry", "Coming in a later phase", FileText),
@@ -128,6 +140,7 @@ export const DASHBOARD_MODULE_CATEGORIES: DashboardModuleCategory[] = [
     key: "nursing-management",
     label: "Nursing Management",
     icon: HeartPulse,
+    permission: "nursing",
     modules: [
       moduleItem("nurse-station", "Nurse Station", "Open nursing workspace", HeartPulse, "/nursing"),
       moduleItem("medication-administration", "Medication Administration", "Coming in a later phase", Pill),
@@ -139,6 +152,7 @@ export const DASHBOARD_MODULE_CATEGORIES: DashboardModuleCategory[] = [
     key: "operation-theatre",
     label: "Operation Theatre",
     icon: Scissors,
+    permission: "operation_theatre",
     modules: [
       moduleItem("ot-scheduling", "OT Scheduling", "Review theatre workspace", CalendarDays),
       moduleItem("ot-notes", "OT Notes", "Coming in a later phase", FileText),
@@ -150,6 +164,7 @@ export const DASHBOARD_MODULE_CATEGORIES: DashboardModuleCategory[] = [
     key: "blood-bank",
     label: "Blood Bank",
     icon: Droplets,
+    permission: "blood_bank",
     modules: [
       moduleItem("blood-inventory", "Blood Inventory", "Review blood bank workspace", Droplets, "/blood-bank"),
       moduleItem("donor-management", "Donor Management", "Coming in a later phase", Users),
@@ -161,6 +176,7 @@ export const DASHBOARD_MODULE_CATEGORIES: DashboardModuleCategory[] = [
     key: "pharmacy",
     label: "Pharmacy",
     icon: Pill,
+    permission: "pharmacy",
     modules: [
       moduleItem("drug-dispensing", "Drug Dispensing", "Review pharmacy workspace", Pill, "/pharmacy"),
       moduleItem("drug-inventory", "Drug Inventory", "Coming in a later phase", Package),
@@ -172,6 +188,7 @@ export const DASHBOARD_MODULE_CATEGORIES: DashboardModuleCategory[] = [
     key: "inventory-management",
     label: "Inventory Management",
     icon: Package,
+    permission: "inventory",
     modules: [
       moduleItem("stock-management", "Stock Management", "Review inventory workspace", Package, "/inventory"),
       moduleItem("purchase-orders", "Purchase Orders", "Coming in a later phase", ClipboardList),
@@ -182,6 +199,7 @@ export const DASHBOARD_MODULE_CATEGORIES: DashboardModuleCategory[] = [
     key: "analytics",
     label: "Analytics",
     icon: LayoutDashboard,
+    permission: "analytics",
     modules: [
       moduleItem("mis-dashboard", "MIS Dashboard", "Review operational metrics", LayoutDashboard, "/analytics"),
       moduleItem("mis-reports", "MIS Reports", "Coming in a later phase", FileBarChart),
@@ -193,6 +211,7 @@ export const DASHBOARD_MODULE_CATEGORIES: DashboardModuleCategory[] = [
     key: "emergency",
     label: "Emergency",
     icon: Ambulance,
+    permission: "emergency",
     modules: [
       moduleItem("emergency-triage", "Emergency Triage", "Open emergency workspace", Ambulance, "/emergency"),
       moduleItem("ambulance-management", "Ambulance Management", "Coming in a later phase", Truck),

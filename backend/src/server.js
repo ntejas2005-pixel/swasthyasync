@@ -7,8 +7,10 @@ const fs = require("node:fs");
 const path = require("node:path");
 const PDFDocument = require("pdfkit");
 const { query, pool, initializeDatabase } = require("./db");
-const { createToken, publicUser, requireAuth, requireRole } = require("./auth");
+const { createToken, publicUser, requireAuth, requireRole, requirePermission } = require("./auth");
+const { normalizeRole } = require("./permissions");
 const { DOCTORS, findDoctor } = require("./doctors");
+const { router: staffRouter } = require("./staff");
 
 const app = express();
 const port = Number(process.env.PORT || 5000);
@@ -16,6 +18,16 @@ const formStorageRoot = path.resolve(__dirname, "..", "forms", "templates");
 
 app.use(cors({ origin: process.env.FRONTEND_ORIGIN || "http://localhost:3000" }));
 app.use(express.json({ limit: "32kb" }));
+
+app.use((req, res, next) => {
+  if (req.method !== "DELETE") return next();
+  return requireAuth(req, res, () => {
+    if (normalizeRole(req.user.role) !== "ADMIN") {
+      return res.status(403).json({ message: "Only administrators can delete records." });
+    }
+    next();
+  });
+});
 
 app.get("/health", (_req, res) => res.json({ status: "ok" }));
 
@@ -77,6 +89,7 @@ app.post("/api/auth/login", async (req, res, next) => {
 app.get("/api/auth/me", requireAuth, (req, res) => res.json({ user: publicUser(req.user) }));
 app.post("/api/auth/logout", requireAuth, (_req, res) => res.status(204).end());
 app.get("/api/admin/check", requireAuth, requireRole("ADMIN"), (_req, res) => res.json({ allowed: true }));
+app.use("/api/staff", staffRouter);
 
 const PATIENT_ENUMS = {
   admissionType: ["OPD", "IPD", "Emergency", "Day Care", "ICU"],
@@ -144,7 +157,7 @@ const patientSelect = `SELECT id, uhid, full_name, admission_type, age, date_of_
   attending_doctor_id, initial_status, patient_category, mlc_type, chief_complaint, payment_type,
   insurance_company, tpa_name, policy_member_id, policy_validity, created_at, updated_at FROM patients`;
 
-app.get("/api/doctors", requireAuth, (_req, res) => res.json({ doctors: DOCTORS }));
+app.get("/api/doctors", requireAuth, requirePermission("patients", "view"), (_req, res) => res.json({ doctors: DOCTORS }));
 
 const APPOINTMENT_STATUSES = ["SCHEDULED", "CONFIRMED", "COMPLETED", "CANCELLED"];
 const SLOT_TIMES = ["09:00", "09:30", "10:00", "10:30", "11:00", "11:30", "14:00", "14:30", "15:00", "15:30", "16:00", "16:30"];
@@ -190,7 +203,7 @@ const appointmentSelect = `SELECT a.id, a.appointment_number, a.patient_id, a.do
   u.name AS created_by_name FROM appointments a
   JOIN patients p ON p.id = a.patient_id JOIN users u ON u.id = a.created_by`;
 
-app.get("/api/appointments/availability", requireAuth, async (req, res, next) => {
+app.get("/api/appointments/availability", requireAuth, requirePermission("appointments", "view"), async (req, res, next) => {
   const { doctorId, date } = req.query;
   if (!doctorId || !date || !dateIsValid(date)) return res.status(400).json({ message: "Select a valid doctor and appointment date." });
   if (!findDoctor(doctorId)) return res.status(404).json({ message: "Doctor not found." });
@@ -201,7 +214,7 @@ app.get("/api/appointments/availability", requireAuth, async (req, res, next) =>
   } catch (error) { next(error); }
 });
 
-app.get("/api/appointments", requireAuth, async (req, res, next) => {
+app.get("/api/appointments", requireAuth, requirePermission("appointments", "view"), async (req, res, next) => {
   const values = [req.user.hospital_id];
   const conditions = ["a.hospital_id = $1"];
   const filters = { date: "a.appointment_date", department: "a.department", doctorId: "a.doctor_id", status: "a.status" };
@@ -218,7 +231,7 @@ app.get("/api/appointments", requireAuth, async (req, res, next) => {
   } catch (error) { next(error); }
 });
 
-app.get("/api/appointments/:id", requireAuth, async (req, res, next) => {
+app.get("/api/appointments/:id", requireAuth, requirePermission("appointments", "view"), async (req, res, next) => {
   try {
     const result = await query(`${appointmentSelect} WHERE a.id = $1 AND a.hospital_id = $2`, [req.params.id, req.user.hospital_id]);
     if (!result.rows[0]) return res.status(404).json({ message: "Appointment not found." });
@@ -226,7 +239,7 @@ app.get("/api/appointments/:id", requireAuth, async (req, res, next) => {
   } catch (error) { next(error); }
 });
 
-app.post("/api/appointments", requireAuth, async (req, res, next) => {
+app.post("/api/appointments", requireAuth, requirePermission("appointments", "create"), async (req, res, next) => {
   const { patientId, doctorId, department, appointmentDate, slotTime } = req.body || {};
   if (!patientId || !doctorId || !department || !appointmentDate || !slotTime) return res.status(400).json({ message: "Patient, department, doctor, date, and slot are required." });
   if (!dateIsValid(appointmentDate) || appointmentDate < new Date().toISOString().slice(0, 10)) return res.status(400).json({ message: "Appointment date must be today or a future date." });
@@ -253,7 +266,7 @@ app.post("/api/appointments", requireAuth, async (req, res, next) => {
   } finally { client.release(); }
 });
 
-app.put("/api/appointments/:id", requireAuth, async (req, res, next) => {
+app.put("/api/appointments/:id", requireAuth, requirePermission("appointments", "edit"), async (req, res, next) => {
   const { status } = req.body || {};
   if (!APPOINTMENT_STATUSES.includes(status)) return res.status(400).json({ message: "Invalid appointment status." });
   try {
@@ -266,7 +279,7 @@ app.put("/api/appointments/:id", requireAuth, async (req, res, next) => {
   } catch (error) { next(error); }
 });
 
-app.get("/api/patients", requireAuth, async (req, res, next) => {
+app.get("/api/patients", requireAuth, requirePermission("patients", "view"), async (req, res, next) => {
   const values = [req.user.hospital_id];
   const conditions = ["hospital_id = $1"];
   const filters = { q: "q", admissionType: "admission_type", department: "department", status: "initial_status", patientCategory: "patient_category", mlcType: "mlc_type" };
@@ -282,7 +295,7 @@ app.get("/api/patients", requireAuth, async (req, res, next) => {
   } catch (error) { next(error); }
 });
 
-app.get("/api/patients/:id", requireAuth, async (req, res, next) => {
+app.get("/api/patients/:id", requireAuth, requirePermission("patients", "view"), async (req, res, next) => {
   try {
     const result = await query(`${patientSelect} WHERE id = $1 AND hospital_id = $2`, [req.params.id, req.user.hospital_id]);
     if (!result.rows[0]) return res.status(404).json({ message: "Patient not found." });
@@ -290,7 +303,7 @@ app.get("/api/patients/:id", requireAuth, async (req, res, next) => {
   } catch (error) { next(error); }
 });
 
-app.post("/api/patients", requireAuth, async (req, res, next) => {
+app.post("/api/patients", requireAuth, requirePermission("patients", "create"), async (req, res, next) => {
   const input = req.body || {};
   const validationError = patientInputError(input);
   if (validationError) return res.status(400).json({ message: validationError });
@@ -309,7 +322,7 @@ app.post("/api/patients", requireAuth, async (req, res, next) => {
   } catch (error) { await client.query("ROLLBACK"); next(error); } finally { client.release(); }
 });
 
-app.put("/api/patients/:id", requireAuth, async (req, res, next) => {
+app.put("/api/patients/:id", requireAuth, requirePermission("patients", "edit"), async (req, res, next) => {
   const input = req.body || {};
   const validationError = patientInputError(input);
   if (validationError) return res.status(400).json({ message: validationError });
@@ -361,7 +374,7 @@ const cpoeSelect = `SELECT o.id, o.order_number, o.hospital_id, o.patient_id, o.
   JOIN patients p ON p.id = o.patient_id
   JOIN users u ON u.id = o.ordered_by`;
 
-app.get("/api/cpoe/orders", requireAuth, async (req, res, next) => {
+app.get("/api/cpoe/orders", requireAuth, requirePermission("cpoe", "view"), async (req, res, next) => {
   const values = [req.user.hospital_id];
   const conditions = ["o.hospital_id = $1"];
 
@@ -384,7 +397,7 @@ app.get("/api/cpoe/orders", requireAuth, async (req, res, next) => {
   } catch (error) { next(error); }
 });
 
-app.get("/api/cpoe/orders/:id", requireAuth, async (req, res, next) => {
+app.get("/api/cpoe/orders/:id", requireAuth, requirePermission("cpoe", "view"), async (req, res, next) => {
   try {
     const result = await query(`${cpoeSelect} WHERE o.id = $1 AND o.hospital_id = $2`, [req.params.id, req.user.hospital_id]);
     if (!result.rows[0]) return res.status(404).json({ message: "CPOE order not found." });
@@ -392,7 +405,7 @@ app.get("/api/cpoe/orders/:id", requireAuth, async (req, res, next) => {
   } catch (error) { next(error); }
 });
 
-app.post("/api/cpoe/orders", requireAuth, async (req, res, next) => {
+app.post("/api/cpoe/orders", requireAuth, requirePermission("cpoe", "create"), async (req, res, next) => {
   const { patientId, category, orderItem, priority, clinicalInstructions, notes } = req.body || {};
   if (!patientId || !category || !orderItem || String(orderItem).trim() === "") {
     return res.status(400).json({ message: "Patient, order type, and order item are required." });
@@ -426,7 +439,7 @@ app.post("/api/cpoe/orders", requireAuth, async (req, res, next) => {
   }
 });
 
-app.put("/api/cpoe/orders/:id", requireAuth, async (req, res, next) => {
+app.put("/api/cpoe/orders/:id", requireAuth, requirePermission("cpoe", "edit"), async (req, res, next) => {
   const { status, priority, orderItem, category, clinicalInstructions, notes } = req.body || {};
   if (!status && !priority && !orderItem && !category && !clinicalInstructions && !notes) {
     return res.status(400).json({ message: "No order update provided." });
@@ -572,7 +585,7 @@ const dischargeSelect = `SELECT s.*, a.admission_number, a.admission_date, p.ful
   u.name AS created_by_name FROM discharge_summaries s
   JOIN ipd_admissions a ON a.id = s.admission_id JOIN patients p ON p.id = s.patient_id JOIN users u ON u.id = s.created_by`;
 
-app.get("/api/form-templates", requireAuth, async (req, res, next) => {
+app.get("/api/form-templates", requireAuth, requirePermission("patient_forms", "view"), async (req, res, next) => {
   const values = [];
   const conditions = ["active = TRUE"];
   if (req.query.category) { values.push(req.query.category); conditions.push(`category = $${values.length}`); }
@@ -584,7 +597,7 @@ app.get("/api/form-templates", requireAuth, async (req, res, next) => {
   } catch (error) { next(error); }
 });
 
-app.get("/api/form-templates/:id", requireAuth, async (req, res, next) => {
+app.get("/api/form-templates/:id", requireAuth, requirePermission("patient_forms", "view"), async (req, res, next) => {
   try {
     const result = await query("SELECT * FROM form_templates WHERE id = $1 AND active = TRUE", [req.params.id]);
     if (!result.rows[0]) return res.status(404).json({ message: "Form template not found." });
@@ -592,7 +605,7 @@ app.get("/api/form-templates/:id", requireAuth, async (req, res, next) => {
   } catch (error) { next(error); }
 });
 
-app.get("/api/form-templates/:id/file", requireAuth, async (req, res, next) => {
+app.get("/api/form-templates/:id/file", requireAuth, requirePermission("patient_forms", "view"), async (req, res, next) => {
   try {
     const result = await query("SELECT file_path, original_filename FROM form_templates WHERE id = $1 AND active = TRUE", [req.params.id]);
     if (!result.rows[0]) return res.status(404).json({ message: "Form template not found." });
@@ -604,7 +617,7 @@ app.get("/api/form-templates/:id/file", requireAuth, async (req, res, next) => {
   } catch (error) { next(error); }
 });
 
-app.get("/api/patient-forms", requireAuth, async (req, res, next) => {
+app.get("/api/patient-forms", requireAuth, requirePermission("patient_forms", "view"), async (req, res, next) => {
   const values = [req.user.hospital_id];
   const conditions = ["p.hospital_id = $1"];
   if (req.query.patientId) { values.push(req.query.patientId); conditions.push(`f.patient_id = $${values.length}`); }
@@ -614,7 +627,7 @@ app.get("/api/patient-forms", requireAuth, async (req, res, next) => {
   } catch (error) { next(error); }
 });
 
-app.get("/api/patient-forms/:id", requireAuth, async (req, res, next) => {
+app.get("/api/patient-forms/:id", requireAuth, requirePermission("patient_forms", "view"), async (req, res, next) => {
   try {
     const result = await query(`${patientFormSelect} WHERE f.id = $1 AND p.hospital_id = $2`, [req.params.id, req.user.hospital_id]);
     if (!result.rows[0]) return res.status(404).json({ message: "Patient form not found." });
@@ -622,7 +635,7 @@ app.get("/api/patient-forms/:id", requireAuth, async (req, res, next) => {
   } catch (error) { next(error); }
 });
 
-app.post("/api/patient-forms", requireAuth, async (req, res, next) => {
+app.post("/api/patient-forms", requireAuth, requirePermission("patient_forms", "create"), async (req, res, next) => {
   const { patientId, templateId, fieldData, status } = req.body || {};
   if (!patientId || !templateId) return res.status(400).json({ message: "Patient and form template are required." });
   if (status && !["DRAFT", "COMPLETED"].includes(status)) return res.status(400).json({ message: "Invalid patient form status." });
@@ -637,7 +650,7 @@ app.post("/api/patient-forms", requireAuth, async (req, res, next) => {
   } catch (error) { next(error); }
 });
 
-app.put("/api/patient-forms/:id", requireAuth, async (req, res, next) => {
+app.put("/api/patient-forms/:id", requireAuth, requirePermission("patient_forms", "edit"), async (req, res, next) => {
   const { fieldData, status } = req.body || {};
   if (fieldData === undefined && !status) return res.status(400).json({ message: "Form data or status is required." });
   if (status && !["DRAFT", "COMPLETED"].includes(status)) return res.status(400).json({ message: "Invalid patient form status." });
@@ -650,21 +663,21 @@ app.put("/api/patient-forms/:id", requireAuth, async (req, res, next) => {
   } catch (error) { next(error); }
 });
 
-app.get("/api/discharge/templates", requireAuth, async (_req, res, next) => {
+app.get("/api/discharge/templates", requireAuth, requirePermission("discharge", "view"), async (_req, res, next) => {
   try {
     const result = await query("SELECT t.* FROM form_templates t JOIN discharge_templates d ON d.form_template_id = t.id WHERE t.active = TRUE AND d.active = TRUE ORDER BY t.name");
     res.json({ templates: result.rows.map(publicFormTemplate), total: result.rowCount });
   } catch (error) { next(error); }
 });
 
-app.get("/api/discharge/admissions", requireAuth, async (req, res, next) => {
+app.get("/api/discharge/admissions", requireAuth, requirePermission("discharge", "view"), async (req, res, next) => {
   try {
     const result = await query(`${ipdSelect} WHERE a.hospital_id = $1 ORDER BY a.admission_date DESC LIMIT 200`, [req.user.hospital_id]);
     res.json({ admissions: result.rows.map(publicAdmission), total: result.rowCount });
   } catch (error) { next(error); }
 });
 
-app.get("/api/discharge/summaries", requireAuth, async (req, res, next) => {
+app.get("/api/discharge/summaries", requireAuth, requirePermission("discharge", "view"), async (req, res, next) => {
   const values = [req.user.hospital_id];
   const conditions = ["s.hospital_id = $1"];
   if (req.query.patientId) { values.push(req.query.patientId); conditions.push(`s.patient_id = $${values.length}`); }
@@ -674,7 +687,7 @@ app.get("/api/discharge/summaries", requireAuth, async (req, res, next) => {
   } catch (error) { next(error); }
 });
 
-app.get("/api/discharge/summaries/:id", requireAuth, async (req, res, next) => {
+app.get("/api/discharge/summaries/:id", requireAuth, requirePermission("discharge", "view"), async (req, res, next) => {
   try {
     const result = await query(`${dischargeSelect} WHERE s.id = $1 AND s.hospital_id = $2`, [req.params.id, req.user.hospital_id]);
     if (!result.rows[0]) return res.status(404).json({ message: "Discharge summary not found." });
@@ -682,7 +695,7 @@ app.get("/api/discharge/summaries/:id", requireAuth, async (req, res, next) => {
   } catch (error) { next(error); }
 });
 
-app.post("/api/discharge/summaries", requireAuth, async (req, res, next) => {
+app.post("/api/discharge/summaries", requireAuth, requirePermission("discharge", "create"), async (req, res, next) => {
   const { admissionId, diagnosis, clinicalSummary, treatmentProcedure, dischargeCondition, dischargeInstructions, followUp, consultant, status } = req.body || {};
   if (!admissionId) return res.status(400).json({ message: "IPD admission is required." });
   if (status && !["DRAFT", "COMPLETED"].includes(status)) return res.status(400).json({ message: "Invalid discharge summary status." });
@@ -701,7 +714,7 @@ app.post("/api/discharge/summaries", requireAuth, async (req, res, next) => {
   } catch (error) { next(error); }
 });
 
-app.put("/api/discharge/summaries/:id", requireAuth, async (req, res, next) => {
+app.put("/api/discharge/summaries/:id", requireAuth, requirePermission("discharge", "edit"), async (req, res, next) => {
   const { diagnosis, clinicalSummary, treatmentProcedure, dischargeCondition, dischargeInstructions, followUp, consultant, status } = req.body || {};
   if (status && !["DRAFT", "COMPLETED"].includes(status)) return res.status(400).json({ message: "Invalid discharge summary status." });
   try {
@@ -716,7 +729,7 @@ app.put("/api/discharge/summaries/:id", requireAuth, async (req, res, next) => {
   } catch (error) { next(error); }
 });
 
-app.get("/api/discharge/summaries/:id/pdf", requireAuth, async (req, res, next) => {
+app.get("/api/discharge/summaries/:id/pdf", requireAuth, requirePermission("discharge", "view"), async (req, res, next) => {
   try {
     const result = await query(`${dischargeSelect} WHERE s.id = $1 AND s.hospital_id = $2`, [req.params.id, req.user.hospital_id]);
     if (!result.rows[0]) return res.status(404).json({ message: "Discharge summary not found." });
@@ -751,21 +764,21 @@ function publicAdmission(row) {
   return { id: row.id, admissionNumber: row.admission_number, patientId: row.patient_id, patientName: row.patient_name, uhid: row.uhid, age: row.age, gender: row.gender, bedId: row.bed_id, bedNumber: row.bed_number, ward: row.ward, room: row.room, admissionDate: row.admission_date, status: row.status, dischargedAt: row.discharged_at };
 }
 
-app.get("/api/ipd/beds", requireAuth, async (req, res, next) => {
+app.get("/api/ipd/beds", requireAuth, requirePermission("ipd", "view"), async (req, res, next) => {
   try {
     const result = await query(`SELECT b.*, a.admission_number, p.id AS patient_id, p.full_name AS patient_name, p.uhid FROM beds b LEFT JOIN ipd_admissions a ON a.bed_id = b.id AND a.status = 'ADMITTED' LEFT JOIN patients p ON p.id = a.patient_id WHERE b.hospital_id = $1 ORDER BY b.ward, b.bed_number`, [req.user.hospital_id]);
     res.json({ beds: result.rows.map(publicBed), total: result.rowCount });
   } catch (error) { next(error); }
 });
 
-app.get("/api/ipd/admissions", requireAuth, async (req, res, next) => {
+app.get("/api/ipd/admissions", requireAuth, requirePermission("ipd", "view"), async (req, res, next) => {
   try {
     const result = await query(`${ipdSelect} WHERE a.hospital_id = $1 AND a.status = 'ADMITTED' ORDER BY a.admission_date DESC`, [req.user.hospital_id]);
     res.json({ admissions: result.rows.map(publicAdmission), total: result.rowCount });
   } catch (error) { next(error); }
 });
 
-app.get("/api/ipd/admissions/:id", requireAuth, async (req, res, next) => {
+app.get("/api/ipd/admissions/:id", requireAuth, requirePermission("ipd", "view"), async (req, res, next) => {
   try {
     const result = await query(`${ipdSelect} WHERE a.id = $1 AND a.hospital_id = $2`, [req.params.id, req.user.hospital_id]);
     if (!result.rows[0]) return res.status(404).json({ message: "IPD admission not found." });
@@ -773,7 +786,7 @@ app.get("/api/ipd/admissions/:id", requireAuth, async (req, res, next) => {
   } catch (error) { next(error); }
 });
 
-app.post("/api/ipd/admissions", requireAuth, async (req, res, next) => {
+app.post("/api/ipd/admissions", requireAuth, requirePermission("ipd", "create"), async (req, res, next) => {
   const { patientId, bedId } = req.body || {};
   if (!patientId || !bedId) return res.status(400).json({ message: "Patient and bed are required." });
   const client = await pool.connect();
@@ -797,7 +810,7 @@ app.post("/api/ipd/admissions", requireAuth, async (req, res, next) => {
   } finally { client.release(); }
 });
 
-app.put("/api/ipd/admissions/:id/discharge", requireAuth, async (req, res, next) => {
+app.put("/api/ipd/admissions/:id/discharge", requireAuth, requirePermission("ipd", "edit"), async (req, res, next) => {
   const client = await pool.connect();
   try {
     await client.query("BEGIN");
@@ -811,7 +824,7 @@ app.put("/api/ipd/admissions/:id/discharge", requireAuth, async (req, res, next)
   } catch (error) { await client.query("ROLLBACK"); next(error); } finally { client.release(); }
 });
 
-app.get("/api/ipd/overview", requireAuth, async (req, res, next) => {
+app.get("/api/ipd/overview", requireAuth, requirePermission("ipd", "view"), async (req, res, next) => {
   try {
     const result = await query("SELECT status, COUNT(*)::int AS count FROM beds WHERE hospital_id = $1 GROUP BY status", [req.user.hospital_id]);
     const counts = Object.fromEntries(result.rows.map((row) => [row.status, row.count]));
@@ -848,21 +861,21 @@ function publicEmergencyEncounter(row) {
   };
 }
 
-app.get("/api/emergency/queue", requireAuth, async (req, res, next) => {
+app.get("/api/emergency/queue", requireAuth, requirePermission("emergency", "view"), async (req, res, next) => {
   try {
     const result = await query(`${emergencySelect} WHERE e.hospital_id = $1 ORDER BY CASE e.triage_level WHEN 'Red' THEN 1 WHEN 'Orange' THEN 2 WHEN 'Yellow' THEN 3 ELSE 4 END, e.arrival_time ASC`, [req.user.hospital_id]);
     res.json({ encounters: result.rows.map(publicEmergencyEncounter), total: result.rowCount });
   } catch (error) { next(error); }
 });
 
-app.get("/api/emergency/encounters", requireAuth, async (req, res, next) => {
+app.get("/api/emergency/encounters", requireAuth, requirePermission("emergency", "view"), async (req, res, next) => {
   try {
     const result = await query(`${emergencySelect} WHERE e.hospital_id = $1 ORDER BY e.arrival_time DESC LIMIT 200`, [req.user.hospital_id]);
     res.json({ encounters: result.rows.map(publicEmergencyEncounter), total: result.rowCount });
   } catch (error) { next(error); }
 });
 
-app.get("/api/emergency/encounters/:id", requireAuth, async (req, res, next) => {
+app.get("/api/emergency/encounters/:id", requireAuth, requirePermission("emergency", "view"), async (req, res, next) => {
   try {
     const result = await query(`${emergencySelect} WHERE e.id = $1 AND e.hospital_id = $2`, [req.params.id, req.user.hospital_id]);
     if (!result.rows[0]) return res.status(404).json({ message: "Emergency encounter not found." });
@@ -870,7 +883,7 @@ app.get("/api/emergency/encounters/:id", requireAuth, async (req, res, next) => 
   } catch (error) { next(error); }
 });
 
-app.post("/api/emergency/encounters", requireAuth, async (req, res, next) => {
+app.post("/api/emergency/encounters", requireAuth, requirePermission("emergency", "create"), async (req, res, next) => {
   const { patientId, triageLevel, status, complaint, notes, arrivalTime } = req.body || {};
   if (!patientId || !triageLevel || !complaint || String(complaint).trim() === "") {
     return res.status(400).json({ message: "Patient, triage level, and complaint are required." });
@@ -905,7 +918,7 @@ app.post("/api/emergency/encounters", requireAuth, async (req, res, next) => {
   }
 });
 
-app.put("/api/emergency/encounters/:id", requireAuth, async (req, res, next) => {
+app.put("/api/emergency/encounters/:id", requireAuth, requirePermission("emergency", "edit"), async (req, res, next) => {
   const { triageLevel, status, complaint, notes } = req.body || {};
   if (!triageLevel && !status && !complaint && !notes) return res.status(400).json({ message: "No emergency update provided." });
   if (triageLevel && !TRIAGE_LEVELS.includes(triageLevel)) return res.status(400).json({ message: "Invalid triage level." });

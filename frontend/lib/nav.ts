@@ -27,7 +27,6 @@ export interface NavItem {
   label: string;
   href: string;
   icon: LucideIcon;
-  adminOnly?: boolean;
   badge?: string;
   children?: NavItem[];
 }
@@ -201,21 +200,18 @@ export const NAV_GROUPS: NavGroup[] = [
         label: "Staff Management",
         href: "/staff",
         icon: Users2,
-        adminOnly: true,
       },
       {
         key: "form-templates",
         label: "Form Templates",
         href: "/form-templates",
         icon: FileText,
-        adminOnly: true,
       },
       {
         key: "audit-log",
         label: "Audit Log",
         href: "/audit-log",
         icon: ShieldCheck,
-        adminOnly: true,
       },
       {
         key: "settings",

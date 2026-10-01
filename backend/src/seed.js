@@ -2,6 +2,7 @@ require("dotenv").config();
 
 const bcrypt = require("bcrypt");
 const { pool, query, initializeDatabase } = require("./db");
+const { importKmhStaff } = require("./kmh-staff-import");
 
 async function seed() {
   await initializeDatabase();
@@ -14,16 +15,30 @@ async function seed() {
   let hospitalId = hospital.id;
 
   const users = [
-    { name: "Dr. Arjun Mehta", email: "admin@swasthyasync.com", password: "admin123", role: "ADMIN" },
-    { name: "Priya Sharma", email: "staff@swasthyasync.com", password: "staff123", role: "STAFF" },
+    { name: "Dr. Arjun Mehta", email: "admin@swasthyasync.com", password: "admin123", role: "ADMIN", staffId: "KMH-DEMO-ADMIN", department: "Administration", designation: "ADMINISTRATOR", qualification: "", dateOfJoining: "2020-01-01" },
+    { name: "Dr. Kavita Rao", email: "doctor@swasthyasync.com", password: "doctor123", role: "DOCTOR", staffId: "KMH-DEMO-DOCTOR", department: "Emergency", designation: "DUTY DOCTOR", qualification: "MBBS", seniority: "Junior", dateOfJoining: "2022-05-16" },
+    { name: "Priya Sharma", email: "staff@swasthyasync.com", password: "staff123", role: "FRONT_DESK", staffId: "KMH-DEMO-FRONTDESK", department: "Outpatient", designation: "EXECUTIVE", qualification: "PUC", dateOfJoining: "2023-04-03" },
+    { name: "Asha Menon", email: "lab.tech@swasthyasync.com", password: "labstaff123", role: "STAFF", staffId: "KMH-DEMO-LAB-001", department: "Laboratory", designation: "Lab Technician", qualification: "DMLT", dateOfJoining: "2024-03-12" },
+    { name: "Neethu Chacko", email: "nurse.staff@swasthyasync.com", password: "nursestaff123", role: "STAFF", staffId: "KMH-DEMO-NURSE-001", department: "Nursing", designation: "SR STAFF NURSE", seniority: "Senior", qualification: "BSC Nursing", dateOfJoining: "2023-08-21" },
   ];
   for (const user of users) {
     const passwordHash = await bcrypt.hash(user.password, 12);
-    await query(
+    const savedUser = await query(
       `INSERT INTO users (hospital_id, name, email, password_hash, role)
        VALUES ($1, $2, $3, $4, $5)
-       ON CONFLICT (email) DO UPDATE SET password_hash = EXCLUDED.password_hash, role = EXCLUDED.role, active = TRUE`,
+       ON CONFLICT (email) DO UPDATE SET password_hash = EXCLUDED.password_hash, role = EXCLUDED.role, active = TRUE
+       RETURNING id`,
       [hospitalId, user.name, user.email, passwordHash, user.role]
+    );
+    await query(
+      `INSERT INTO staff_profiles (user_id, hospital_id, full_name, role, staff_id, designation, department, seniority, qualification, date_of_joining, status)
+       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, 'ACTIVE')
+       ON CONFLICT (user_id) DO UPDATE SET staff_id = EXCLUDED.staff_id, designation = EXCLUDED.designation,
+         department = EXCLUDED.department, seniority = EXCLUDED.seniority, qualification = EXCLUDED.qualification,
+         date_of_joining = EXCLUDED.date_of_joining, full_name = EXCLUDED.full_name, role = EXCLUDED.role,
+         hospital_id = EXCLUDED.hospital_id, updated_at = NOW()
+       WHERE staff_profiles.source_key IS NULL`,
+      [savedUser.rows[0].id, hospitalId, user.name, user.role === "FRONT_DESK" ? "STAFF" : user.role, user.staffId, user.designation || null, user.department || null, user.seniority || null, user.qualification || null, user.dateOfJoining]
     );
   }
 
@@ -54,7 +69,9 @@ async function seed() {
       [hospitalId, bedNumber, ward, room]
     );
   }
-  console.log("Seeded local admin and staff users.");
+  const importReport = await importKmhStaff(hospitalId);
+  console.log("KMH staff import report:", JSON.stringify(importReport));
+  console.log("Seeded local Admin, Doctor, Front Desk, and two reference-based Staff accounts.");
 }
 
 seed().catch((error) => {

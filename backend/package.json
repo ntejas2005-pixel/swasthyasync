@@ -6,7 +6,8 @@
   "scripts": {
     "dev": "node --watch src/server.js",
     "start": "node src/server.js",
-    "seed": "node src/seed.js"
+    "seed": "node src/seed.js",
+    "test": "node --test tests/permissions.test.js tests/staff.test.js tests/kmh-staff-import.test.js"
   },
   "dependencies": {
     "bcrypt": "^6.0.0",

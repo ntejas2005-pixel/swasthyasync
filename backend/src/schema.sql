@@ -13,13 +13,125 @@ CREATE TABLE IF NOT EXISTS users (
   name TEXT NOT NULL,
   email TEXT NOT NULL UNIQUE,
   password_hash TEXT NOT NULL,
-  role TEXT NOT NULL CHECK (role IN ('ADMIN', 'STAFF')),
+  role TEXT NOT NULL CHECK (role IN ('ADMIN', 'DOCTOR', 'FRONT_DESK', 'STAFF')),
   active BOOLEAN NOT NULL DEFAULT TRUE,
   created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
   updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
 );
 
+DO $$
+BEGIN
+  IF EXISTS (
+    SELECT 1 FROM pg_constraint
+    WHERE conrelid = 'users'::regclass
+      AND conname = 'users_role_check'
+      AND pg_get_constraintdef(oid) NOT LIKE '%FRONT_DESK%'
+  ) THEN
+    UPDATE users SET role = 'FRONT_DESK' WHERE role = 'STAFF';
+  END IF;
+END $$;
+
+ALTER TABLE users DROP CONSTRAINT IF EXISTS users_role_check;
+ALTER TABLE users ADD CONSTRAINT users_role_check CHECK (role IN ('ADMIN', 'DOCTOR', 'FRONT_DESK', 'STAFF'));
+
 CREATE INDEX IF NOT EXISTS users_hospital_id_idx ON users(hospital_id);
+
+CREATE TABLE IF NOT EXISTS staff_profiles (
+  id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  user_id UUID REFERENCES users(id) ON DELETE SET NULL,
+  hospital_id UUID NOT NULL REFERENCES hospitals(id) ON DELETE CASCADE,
+  source_key TEXT,
+  full_name TEXT NOT NULL,
+  role TEXT NOT NULL CHECK (role IN ('ADMIN', 'DOCTOR', 'STAFF')),
+  staff_id TEXT UNIQUE,
+  phone TEXT,
+  designation TEXT,
+  department TEXT,
+  seniority TEXT,
+  qualification TEXT,
+  date_of_joining DATE,
+  status TEXT NOT NULL DEFAULT 'ACTIVE' CHECK (status IN ('ACTIVE', 'SUSPENDED')),
+  created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+
+ALTER TABLE staff_profiles ADD COLUMN IF NOT EXISTS id UUID;
+ALTER TABLE staff_profiles ADD COLUMN IF NOT EXISTS hospital_id UUID REFERENCES hospitals(id) ON DELETE CASCADE;
+ALTER TABLE staff_profiles ADD COLUMN IF NOT EXISTS source_key TEXT;
+ALTER TABLE staff_profiles ADD COLUMN IF NOT EXISTS full_name TEXT;
+ALTER TABLE staff_profiles ADD COLUMN IF NOT EXISTS role TEXT;
+ALTER TABLE staff_profiles ADD COLUMN IF NOT EXISTS status TEXT DEFAULT 'ACTIVE';
+
+UPDATE staff_profiles p
+SET id = COALESCE(p.id, gen_random_uuid()),
+    hospital_id = COALESCE(p.hospital_id, u.hospital_id),
+    full_name = COALESCE(p.full_name, u.name),
+    role = CASE WHEN u.role IN ('FRONT_DESK', 'STAFF') THEN 'STAFF' ELSE u.role END,
+    status = CASE WHEN u.active THEN 'ACTIVE' ELSE 'SUSPENDED' END
+FROM users u
+WHERE p.user_id = u.id
+  AND (p.id IS NULL OR p.hospital_id IS NULL OR p.full_name IS NULL OR p.role IS NULL OR p.status IS NULL);
+
+UPDATE staff_profiles SET id = gen_random_uuid() WHERE id IS NULL;
+
+DO $$
+DECLARE
+  primary_key_name TEXT;
+BEGIN
+  SELECT conname INTO primary_key_name
+  FROM pg_constraint
+  WHERE conrelid = 'staff_profiles'::regclass AND contype = 'p';
+  IF primary_key_name IS NOT NULL
+     AND pg_get_constraintdef((SELECT oid FROM pg_constraint WHERE conrelid = 'staff_profiles'::regclass AND conname = primary_key_name)) <> 'PRIMARY KEY (id)' THEN
+    EXECUTE format('ALTER TABLE staff_profiles DROP CONSTRAINT %I', primary_key_name);
+  END IF;
+  IF NOT EXISTS (
+    SELECT 1 FROM pg_constraint
+    WHERE conrelid = 'staff_profiles'::regclass AND contype = 'p'
+      AND pg_get_constraintdef(oid) = 'PRIMARY KEY (id)'
+  ) THEN
+    ALTER TABLE staff_profiles ADD CONSTRAINT staff_profiles_pkey PRIMARY KEY (id);
+  END IF;
+END $$;
+
+ALTER TABLE staff_profiles ALTER COLUMN id SET DEFAULT gen_random_uuid();
+ALTER TABLE staff_profiles ALTER COLUMN id SET NOT NULL;
+ALTER TABLE staff_profiles ALTER COLUMN hospital_id SET NOT NULL;
+ALTER TABLE staff_profiles ALTER COLUMN full_name SET NOT NULL;
+ALTER TABLE staff_profiles ALTER COLUMN role SET NOT NULL;
+ALTER TABLE staff_profiles ALTER COLUMN status SET DEFAULT 'ACTIVE';
+ALTER TABLE staff_profiles ALTER COLUMN status SET NOT NULL;
+ALTER TABLE staff_profiles ALTER COLUMN user_id DROP NOT NULL;
+ALTER TABLE staff_profiles ALTER COLUMN staff_id DROP NOT NULL;
+
+DO $$
+BEGIN
+  IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conrelid = 'staff_profiles'::regclass AND conname = 'staff_profiles_role_check') THEN
+    ALTER TABLE staff_profiles ADD CONSTRAINT staff_profiles_role_check CHECK (role IN ('ADMIN', 'DOCTOR', 'STAFF'));
+  END IF;
+  IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conrelid = 'staff_profiles'::regclass AND conname = 'staff_profiles_status_check') THEN
+    ALTER TABLE staff_profiles ADD CONSTRAINT staff_profiles_status_check CHECK (status IN ('ACTIVE', 'SUSPENDED'));
+  END IF;
+  IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conrelid = 'staff_profiles'::regclass AND conname = 'staff_profiles_user_id_fkey' AND confdeltype = 'n') THEN
+    ALTER TABLE staff_profiles DROP CONSTRAINT IF EXISTS staff_profiles_user_id_fkey;
+    ALTER TABLE staff_profiles ADD CONSTRAINT staff_profiles_user_id_fkey FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE SET NULL;
+  END IF;
+END $$;
+
+CREATE UNIQUE INDEX IF NOT EXISTS staff_profiles_user_id_unique_idx ON staff_profiles(user_id);
+CREATE UNIQUE INDEX IF NOT EXISTS staff_profiles_source_key_unique_idx ON staff_profiles(source_key);
+CREATE INDEX IF NOT EXISTS staff_profiles_hospital_role_idx ON staff_profiles(hospital_id, role);
+
+CREATE INDEX IF NOT EXISTS staff_profiles_designation_idx ON staff_profiles(designation);
+CREATE INDEX IF NOT EXISTS staff_profiles_department_idx ON staff_profiles(department);
+
+INSERT INTO staff_profiles (user_id, hospital_id, full_name, role, staff_id, status)
+SELECT id, hospital_id, name,
+  CASE WHEN role IN ('FRONT_DESK', 'STAFF') THEN 'STAFF' ELSE role END,
+  'USR-' || upper(replace(id::text, '-', '')),
+  CASE WHEN active THEN 'ACTIVE' ELSE 'SUSPENDED' END
+FROM users
+ON CONFLICT DO NOTHING;
 
 CREATE SEQUENCE IF NOT EXISTS patient_uhid_seq START 1001;
 

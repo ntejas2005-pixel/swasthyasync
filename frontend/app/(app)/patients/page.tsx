@@ -10,12 +10,13 @@ import { Input } from "@/components/ui/Input";
 import { Select } from "@/components/ui/Select";
 import { useAuth } from "@/context/AuthContext";
 import { fetchPatients } from "@/lib/patients";
+import { canAccessModule } from "@/lib/permissions";
 import { ADMISSION_TYPES, DEPARTMENTS, INITIAL_STATUSES } from "@/types/patients";
 import type { Patient } from "@/types/patients";
 import styles from "@/components/patients/Patient.module.css";
 
 export default function PatientsPage() {
-  const { token } = useAuth();
+  const { token, user } = useAuth();
   const [patients, setPatients] = useState<Patient[]>([]);
   const [filters, setFilters] = useState({ search: "", admissionType: "", department: "", status: "" });
   const [loading, setLoading] = useState(true);
@@ -63,7 +64,7 @@ export default function PatientsPage() {
         </div>
         <div className={styles.actions}>
           <Button variant="secondary" leftIcon={<RefreshCw size={15} />} onClick={() => void loadPatients()}>Refresh</Button>
-          <Link href="/patients/new"><Button leftIcon={<Plus size={15} />}>Add patient</Button></Link>
+          {canAccessModule(user?.role, "patients", "create") && <Link href="/patients/new"><Button leftIcon={<Plus size={15} />}>Add patient</Button></Link>}
         </div>
       </div>
 

@@ -42,6 +42,7 @@ import { Card, CardHeader, CardBody } from "@/components/ui/Card";
 import { useAuth } from "@/context/AuthContext";
 import styles from "./page.module.css";
 import { DASHBOARD_MODULE_CATEGORIES } from "@/lib/dashboard/dashboardData";
+import { canAccessModule, permissionForPath } from "@/lib/permissions";
 
 /* ── KPI card ────────────────────────────────────────────── */
 interface KpiCardProps {
@@ -111,7 +112,19 @@ function AlertDot({ type }: { type: string }) {
 
 function ModuleLauncher() {
   const [activeCategory, setActiveCategory] = useState(DASHBOARD_MODULE_CATEGORIES[0].key);
-  const category = DASHBOARD_MODULE_CATEGORIES.find((item) => item.key === activeCategory) ?? DASHBOARD_MODULE_CATEGORIES[0];
+  const { user } = useAuth();
+  const visibleCategories = DASHBOARD_MODULE_CATEGORIES.map((item) => ({
+    ...item,
+    modules: item.modules.filter((module) => {
+      const routePermission = module.href ? permissionForPath(module.href) : null;
+      const permissionModule = module.permission ?? routePermission?.module ?? item.permission;
+      const permissionAction = module.action ?? routePermission?.action ?? "view";
+      return canAccessModule(user?.role, permissionModule, permissionAction);
+    }),
+  })).filter((item) => item.modules.length > 0);
+  const category = visibleCategories.find((item) => item.key === activeCategory) ?? visibleCategories[0];
+
+  if (!category) return null;
 
   return (
     <section className={styles.launcher} aria-labelledby="module-launcher-title">
@@ -121,10 +134,10 @@ function ModuleLauncher() {
           <h2 id="module-launcher-title" className={styles.sectionTitle}>Module Launcher</h2>
           <p className={styles.sectionSubtitle}>Move between hospital workflows from one place.</p>
         </div>
-        <span className={styles.launcherCount}>{DASHBOARD_MODULE_CATEGORIES.length} categories</span>
+        <span className={styles.launcherCount}>{visibleCategories.length} categories</span>
       </div>
       <div className={styles.launcherTabs} role="tablist" aria-label="Dashboard module categories">
-        {DASHBOARD_MODULE_CATEGORIES.map((item) => {
+        {visibleCategories.map((item) => {
           const Icon = item.icon;
           const active = item.key === category.key;
           return (
@@ -468,7 +481,7 @@ export default function DashboardPage() {
           </Card>
 
           {/* Pending labs */}
-          <Card>
+          {canAccessModule(user?.role, "laboratory") && <Card>
             <CardHeader
               title="Pending Lab Tests"
               divider
@@ -504,10 +517,10 @@ export default function DashboardPage() {
                 </div>
               ))}
             </CardBody>
-          </Card>
+          </Card>}
 
           {/* OPD Queue */}
-          <Card>
+          {canAccessModule(user?.role, "opd_queue") && <Card>
             <CardHeader
               title="OPD Queue"
               subtitle="Today"
@@ -538,7 +551,7 @@ export default function DashboardPage() {
                 </div>
               ))}
             </CardBody>
-          </Card>
+          </Card>}
         </div>
       </div>
     </div>
